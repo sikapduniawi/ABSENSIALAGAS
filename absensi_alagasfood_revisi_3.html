@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Absensi Pegawai Alagasfood</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 16px; background: #f5f5f5; color: #222; }
+    h1 { text-align: center; font-size: 22px; margin: 4px 0 12px; }
+    .info-tanggal { text-align: center; margin-bottom: 14px; font-size: 14px; }
+    .card { background: #fff; border-radius: 9px; padding: 12px; margin-bottom: 12px; box-shadow: 0 2px 5px rgba(0,0,0,.08); }
+    .nama { font-weight: bold; font-size: 16px; margin-bottom: 10px; }
+    .btn-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    button { border: 0; border-radius: 6px; padding: 10px 8px; color: white; font-size: 13px; cursor: pointer; }
+    button:disabled { opacity: .38; cursor: not-allowed; }
+    .pagi-masuk { background: #2196f3; }
+    .siang-pulang { background: #ff9800; }
+    .siang-masuk { background: #4caf50; }
+    .sore-pulang { background: #9c27b0; }
+    .masuk-sore { background: #00897b; }
+    .pulang-malam { background: #5e35b1; }
+    .libur { background: #e53935; }
+    .catatan-label { display: block; margin: 12px 0 5px; font-size: 13px; font-weight: bold; }
+    textarea { width: 100%; min-height: 58px; resize: vertical; border: 1px solid #ccc; border-radius: 6px; padding: 9px; font: inherit; font-size: 13px; }
+    .footer { margin-top: 16px; font-size: 12px; text-align: center; }
+    .footer-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; }
+    .footer button { background: #444; }
+    .footer button.delete-btn { background: #e53935; }
+    .log-preview { white-space: pre-wrap; font-size: 11px; max-height: 240px; overflow-y: auto; background: #222; color: #eee; padding: 9px; border-radius: 6px; margin-top: 8px; text-align: left; }
+    .status-note { font-size: 11px; color: #666; margin-top: 7px; }
+    @media (min-width: 700px) { body { max-width: 900px; margin: auto; } .btn-group { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  </style>
+</head>
+<body>
+  <h1>Absensi Pegawai Alagasfood</h1>
+  <div class="info-tanggal" id="infoTanggal"></div>
+  <div id="listPegawai"></div>
+
+  <div class="card footer">
+    <div class="footer-actions">
+      <button onclick="downloadXlsx()">Download Excel (.xlsx)</button>
+      <button onclick="downloadCsv()">Download CSV</button>
+      <button class="delete-btn" onclick="clearAllData()">Hapus Semua Absensi</button>
+    </div>
+    <div style="margin-top:10px;">Preview data tersimpan:</div>
+    <div id="logPreview" class="log-preview"></div>
+    <div class="status-note">Data disimpan di Local Storage browser/perangkat ini.</div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script>
+    // ---------------- KONFIGURASI ----------------
+    const PEGAWAI = ["Bu Wita", "Bu Sur", "Bu Susi", "Dea", "Nurul", "Dinda"];
+    const STATUS = {
+      PAGI_MASUK: "Pagi-Masuk",
+      SIANG_PULANG: "Siang-Pulang",
+      SIANG_MASUK: "Siang-Masuk",
+      SORE_PULANG: "Sore-Pulang",
+      MASUK_SORE: "Masuk-Sore",
+      PULANG_MALAM: "Pulang-Malam",
+      LIBUR_PAGI: "Libur-Pagi",
+      LIBUR_SIANG: "Libur-Siang",
+      LIBUR_SORE: "Libur-Sore",
+      CATATAN: "Catatan-Kendala"
+    };
+    const STORAGE_KEY = "absensi_toko";
+
+    function pad(n) { return String(n).padStart(2, "0"); }
+
+    function getNow() {
+      const d = new Date();
+      const hari = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+      return {
+        dateKey: `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`,
+        dateLabel: `${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()}`,
+        time: `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+        dayName: hari[d.getDay()]
+      };
+    }
+
+    function formatTanggalIndo(ymd) {
+      const [y, m, d] = ymd.split("-");
+      return `${d}/${m}/${y}`;
+    }
+
+    // ---------------- LOCAL STORAGE & MIGRASI DATA ----------------
+    function loadData() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return {};
+      try {
+        const data = JSON.parse(raw);
+        Object.values(data).forEach(list => {
+          if (!Array.isArray(list)) return;
+          list.forEach(rec => {
+            if (rec.nama === "Bg Ari") rec.nama = "Dinda";
+            if (rec.status === "Absent-Pagi") rec.status = STATUS.LIBUR_PAGI;
+            if (rec.status === "Absent-Siang") rec.status = STATUS.LIBUR_SIANG;
+          });
+        });
+        return data;
+      } catch (e) {
+        console.error("Data absensi tidak dapat dibaca:", e);
+        alert("Data absensi tidak dapat dibaca. Data Local Storage tidak dihapus.");
+        return {};
+      }
+    }
+
+    function saveData(data) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+
+    function getTodayList(data, dateKey) {
+      return Array.isArray(data[dateKey]) ? data[dateKey] : [];
+    }
+
+    function getRecord(list, nama, status) {
+      return list.find(r => r.nama === nama && r.status === status);
+    }
+
+    function hasStatus(nama, status, dateKey = getNow().dateKey) {
+      return Boolean(getRecord(getTodayList(loadData(), dateKey), nama, status));
+    }
+
+    function addRecord(nama, status) {
+      const now = getNow();
+      const data = loadData();
+      if (!Array.isArray(data[now.dateKey])) data[now.dateKey] = [];
+      data[now.dateKey].push({
+        nama, status, tanggal: now.dateKey,
+        hari: now.dayName, jam: now.time
+      });
+      saveData(data);
+      renderPreview();
+      updateAllButtonsDisabledState();
+    }
+
+    // ---------------- TAMPILAN PEGAWAI ----------------
+    function makeButton(label, cssClass, onClick) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = label;
+      btn.className = cssClass;
+      btn.addEventListener("click", onClick);
+      return btn;
+    }
+
+    function renderPegawai() {
+      const container = document.getElementById("listPegawai");
+      container.innerHTML = "";
+
+      PEGAWAI.forEach(nama => {
+        const card = document.createElement("section");
+        card.className = "card";
+        card.dataset.nama = nama;
+
+        const title = document.createElement("div");
+        title.className = "nama";
+        title.textContent = nama;
+
+        const group = document.createElement("div");
+        group.className = "btn-group";
+
+        // Sembilan tombol absensi: seluruh tombol shift dipertahankan.
+        group.appendChild(makeButton("Pagi Masuk", "pagi-masuk", () => catatJam(nama, STATUS.PAGI_MASUK)));
+        group.appendChild(makeButton("Siang Pulang", "siang-pulang", () => catatJam(nama, STATUS.SIANG_PULANG)));
+        group.appendChild(makeButton("Siang Masuk", "siang-masuk", () => catatJam(nama, STATUS.SIANG_MASUK)));
+        group.appendChild(makeButton("Sore Pulang", "sore-pulang", () => catatJam(nama, STATUS.SORE_PULANG)));
+        group.appendChild(makeButton("Masuk Sore", "masuk-sore", () => catatJam(nama, STATUS.MASUK_SORE)));
+        group.appendChild(makeButton("Pulang Malam", "pulang-malam", () => catatJam(nama, STATUS.PULANG_MALAM)));
+        group.appendChild(makeButton("Libur Pagi", "libur", () => catatLibur(nama, STATUS.LIBUR_PAGI)));
+        group.appendChild(makeButton("Libur Siang", "libur", () => catatLibur(nama, STATUS.LIBUR_SIANG)));
+        group.appendChild(makeButton("Libur Sore", "libur", () => catatLibur(nama, STATUS.LIBUR_SORE)));
+
+        const label = document.createElement("label");
+        label.className = "catatan-label";
+        label.textContent = "Catatan Kendala (berlaku untuk hari ini)";
+
+        const textarea = document.createElement("textarea");
+        textarea.placeholder = "Contoh: terlambat karena kendala kendaraan...";
+        textarea.setAttribute("aria-label", `Catatan kendala ${nama}`);
+        textarea.value = getCatatan(nama);
+        textarea.addEventListener("input", () => simpanCatatan(nama, textarea.value));
+
+        card.append(title, group, label, textarea);
+        container.appendChild(card);
+      });
+      updateAllButtonsDisabledState();
+    }
+
+    function catatJam(nama, status) {
+      if (hasStatus(nama, status)) {
+        alert(`Absensi ${status.replaceAll("-", " ")} sudah dicatat hari ini untuk ${nama}.`);
+        return;
+      }
+      const now = getNow();
+      addRecord(nama, status);
+      alert(`Terekam: ${nama} - ${status.replaceAll("-", " ")} - ${now.time}`);
+    }
+
+    function catatLibur(nama, status) {
+      if (hasStatus(nama, status)) {
+        alert(`${status.replaceAll("-", " ")} sudah dicatat hari ini untuk ${nama}.`);
+        return;
+      }
+      const now = getNow();
+      addRecord(nama, status);
+      alert(`Terekam: ${nama} - ${status.replaceAll("-", " ")} - ${now.time}`);
+    }
+
+    // Satu catatan per pegawai per tanggal.
+    function getCatatan(nama, dateKey = getNow().dateKey) {
+      const rec = getRecord(getTodayList(loadData(), dateKey), nama, STATUS.CATATAN);
+      return rec ? (rec.catatan || "") : "";
+    }
+
+    function simpanCatatan(nama, isi) {
+      const now = getNow();
+      const data = loadData();
+      if (!Array.isArray(data[now.dateKey])) data[now.dateKey] = [];
+      let rec = getRecord(data[now.dateKey], nama, STATUS.CATATAN);
+      if (!rec) {
+        rec = { nama, status: STATUS.CATATAN, tanggal: now.dateKey, hari: now.dayName, jam: now.time, catatan: "" };
+        data[now.dateKey].push(rec);
+      }
+      rec.catatan = isi;
+      rec.diperbarui = now.time;
+      saveData(data);
+      renderPreview();
+    }
+
+    // ---------------- VALIDASI TOMBOL PER SESI ----------------
+    function updateAllButtonsDisabledState() {
+      const now = getNow();
+      const list = getTodayList(loadData(), now.dateKey);
+
+      document.querySelectorAll("#listPegawai .card").forEach(card => {
+        const nama = card.dataset.nama;
+        const used = new Set(list.filter(r => r.nama === nama).map(r => r.status));
+        const disabled = new Set(used);
+
+        // Sesi pagi: Pagi Masuk - Siang Pulang.
+        if (used.has(STATUS.LIBUR_PAGI)) {
+          disabled.add(STATUS.PAGI_MASUK);
+          disabled.add(STATUS.SIANG_PULANG);
+        }
+        // Sesi siang: Siang Masuk - Sore Pulang.
+        if (used.has(STATUS.LIBUR_SIANG)) {
+          disabled.add(STATUS.SIANG_MASUK);
+          disabled.add(STATUS.SORE_PULANG);
+        }
+        // Sesi sore/malam: Masuk Sore - Pulang Malam.
+        if (used.has(STATUS.LIBUR_SORE)) {
+          disabled.add(STATUS.MASUK_SORE);
+          disabled.add(STATUS.PULANG_MALAM);
+        }
+
+        const buttonStatus = {
+          "Pagi Masuk": STATUS.PAGI_MASUK,
+          "Siang Pulang": STATUS.SIANG_PULANG,
+          "Siang Masuk": STATUS.SIANG_MASUK,
+          "Sore Pulang": STATUS.SORE_PULANG,
+          "Masuk Sore": STATUS.MASUK_SORE,
+          "Pulang Malam": STATUS.PULANG_MALAM,
+          "Libur Pagi": STATUS.LIBUR_PAGI,
+          "Libur Siang": STATUS.LIBUR_SIANG,
+          "Libur Sore": STATUS.LIBUR_SORE
+        };
+
+        card.querySelectorAll("button").forEach(btn => {
+          btn.disabled = disabled.has(buttonStatus[btn.textContent]);
+        });
+      });
+    }
+
+    // ---------------- HAPUS SEMUA DATA ----------------
+    function clearAllData() {
+      const ok = confirm(
+        "PERINGATAN!\n\nYakin ingin menghapus SEMUA data absensi dan catatan kendala Alagasfood di browser/perangkat ini?\n\nData yang dihapus tidak dapat dikembalikan."
+      );
+      if (!ok) return;
+      localStorage.removeItem(STORAGE_KEY);
+      renderPegawai();
+      renderPreview();
+      alert("Semua data absensi dan catatan kendala di perangkat ini telah dihapus.");
+    }
+
+    // ---------------- HITUNG DURASI & OVERTIME ----------------
+    function parseJamKeMenit(jam) {
+      if (!jam) return null;
+      const [h, m] = jam.split(":").map(Number);
+      if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+      return h * 60 + m;
+    }
+
+    function hitungDurasiJam(mulai, selesai) {
+      const a = parseJamKeMenit(mulai);
+      const b = parseJamKeMenit(selesai);
+      if (a === null || b === null) return 0;
+      // Mendukung shift yang melewati tengah malam.
+      const end = b <= a ? b + 24 * 60 : b;
+      return (end - a) / 60;
+    }
+
+    function round2(n) {
+      return Math.round((n + Number.EPSILON) * 100) / 100;
+    }
+
+    function buildReportRows() {
+      const data = loadData();
+      const dates = Object.keys(data).sort();
+      const records = [];
+
+      dates.forEach(tanggal => {
+        const list = Array.isArray(data[tanggal]) ? data[tanggal] : [];
+        PEGAWAI.forEach(nama => {
+          const person = list.filter(r => r.nama === nama);
+          if (!person.length) return;
+
+          const find = status => person.find(r => r.status === status);
+          const pagi = find(STATUS.PAGI_MASUK);
+          const siangPulang = find(STATUS.SIANG_PULANG);
+          const siangMasuk = find(STATUS.SIANG_MASUK);
+          const sorePulang = find(STATUS.SORE_PULANG);
+          const masukSore = find(STATUS.MASUK_SORE);
+          const pulangMalam = find(STATUS.PULANG_MALAM);
+          const liburPagi = find(STATUS.LIBUR_PAGI) || find("Absent-Pagi");
+          const liburSiang = find(STATUS.LIBUR_SIANG) || find("Absent-Siang");
+          const liburSore = find(STATUS.LIBUR_SORE);
+          const catatan = find(STATUS.CATATAN);
+
+          const pagiMasukValue = liburPagi ? "LIBUR" : (pagi?.jam || "");
+          const siangPulangValue = liburPagi ? "LIBUR" : (siangPulang?.jam || "");
+          const siangMasukValue = liburSiang ? "LIBUR" : (siangMasuk?.jam || "");
+          const sorePulangValue = liburSiang ? "LIBUR" : (sorePulang?.jam || "");
+          const masukSoreValue = liburSore ? "LIBUR" : (masukSore?.jam || "");
+          const pulangMalamValue = liburSore ? "LIBUR" : (pulangMalam?.jam || "");
+
+          const durasiPagi = liburPagi ? 0 : hitungDurasiJam(pagi?.jam, siangPulang?.jam);
+          const durasiSiang = liburSiang ? 0 : hitungDurasiJam(siangMasuk?.jam, sorePulang?.jam);
+          const durasiSore = liburSore ? 0 : hitungDurasiJam(masukSore?.jam, pulangMalam?.jam);
+          const totalJam = durasiPagi + durasiSiang + durasiSore;
+          const overtime = round2(Math.max(0, totalJam - 8));
+
+          records.push({
+            nama,
+            hari: person.find(r => r.hari)?.hari || "",
+            tanggal,
+            pagiMasuk: pagiMasukValue,
+            siangPulang: siangPulangValue,
+            siangMasuk: siangMasukValue,
+            sorePulang: sorePulangValue,
+            masukSore: masukSoreValue,
+            pulangMalam: pulangMalamValue,
+            keteranganLibur: [
+              liburPagi && "Libur Pagi",
+              liburSiang && "Libur Siang",
+              liburSore && "Libur Sore"
+            ].filter(Boolean).join(", "),
+            catatan: catatan?.catatan || "",
+            overtime
+          });
+        });
+      });
+
+      return records.sort((a, b) =>
+        a.nama.localeCompare(b.nama, "id") || a.tanggal.localeCompare(b.tanggal)
+      );
+    }
+
+    // ---------------- EXPORT CSV ----------------
+    function csvEscape(value) {
+      const text = String(value ?? "");
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+
+    function downloadCsv() {
+      const report = buildReportRows();
+      if (!report.length) {
+        alert("Belum ada data untuk di-download.");
+        return;
+      }
+
+      const headers = [
+        "Nama", "Hari", "Tanggal", "Pagi-Masuk", "Siang-Pulang",
+        "Siang-Masuk", "Sore-Pulang", "Masuk Sore", "Pulang Malam",
+        "Keterangan Libur", "Catatan Kendala", "Overtime"
+      ];
+
+      const rows = report.map(r => [
+        r.nama, r.hari, formatTanggalIndo(r.tanggal),
+        r.pagiMasuk, r.siangPulang, r.siangMasuk, r.sorePulang,
+        r.masukSore, r.pulangMalam, r.keteranganLibur, r.catatan, r.overtime
+      ]);
+
+      const csv = [headers, ...rows].map(row => row.map(csvEscape).join(",")).join("\r\n");
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `absensi_alagasfood_${getNow().dateKey}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // ---------------- EXPORT EXCEL XLSX ----------------
+    async function downloadXlsx() {
+      const report = buildReportRows();
+      if (!report.length) {
+        alert("Belum ada data untuk di-download.");
+        return;
+      }
+      if (typeof ExcelJS === "undefined") {
+        alert("Library Excel belum berhasil dimuat. Periksa koneksi internet, lalu coba lagi.");
+        return;
+      }
+
+      try {
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = "Alagasfood";
+        workbook.created = new Date();
+
+        const sheet = workbook.addWorksheet("Absensi", {
+          views: [{ state: "frozen", ySplit: 1 }]
+        });
+
+        sheet.columns = [
+          { header: "Nama", key: "nama", width: 18 },
+          { header: "Hari", key: "hari", width: 13 },
+          { header: "Tanggal", key: "tanggal", width: 14 },
+          { header: "Pagi-Masuk", key: "pagiMasuk", width: 16 },
+          { header: "Siang-Pulang", key: "siangPulang", width: 17 },
+          { header: "Siang-Masuk", key: "siangMasuk", width: 16 },
+          { header: "Sore-Pulang", key: "sorePulang", width: 16 },
+          { header: "Masuk Sore", key: "masukSore", width: 16 },
+          { header: "Pulang Malam", key: "pulangMalam", width: 16 },
+          { header: "Keterangan Libur", key: "keteranganLibur", width: 24 },
+          { header: "Catatan Kendala", key: "catatan", width: 42 },
+          { header: "Overtime", key: "overtime", width: 13 }
+        ];
+
+        const header = sheet.getRow(1);
+        header.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF333333" } };
+        header.alignment = { vertical: "middle", horizontal: "center" };
+        header.height = 24;
+
+        report.forEach(r => {
+          const row = sheet.addRow({
+            nama: r.nama,
+            hari: r.hari,
+            tanggal: formatTanggalIndo(r.tanggal),
+            pagiMasuk: r.pagiMasuk,
+            siangPulang: r.siangPulang,
+            siangMasuk: r.siangMasuk,
+            sorePulang: r.sorePulang,
+            masukSore: r.masukSore,
+            pulangMalam: r.pulangMalam,
+            keteranganLibur: r.keteranganLibur,
+            catatan: r.catatan,
+            overtime: r.overtime
+          });
+
+          row.getCell("overtime").numFmt = "0.##";
+          row.alignment = { vertical: "middle", wrapText: true };
+
+          ["pagiMasuk", "siangPulang", "siangMasuk", "sorePulang",
+           "masukSore", "pulangMalam", "keteranganLibur"].forEach(key => {
+            const cell = row.getCell(key);
+            if (String(cell.value || "").toUpperCase().includes("LIBUR")) {
+              cell.font = { color: { argb: "FFFF0000" }, bold: true };
+            }
+          });
+        });
+
+        sheet.autoFilter = { from: "A1", to: "L1" };
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `absensi_alagasfood_${getNow().dateKey}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } catch (error) {
+        console.error("Gagal membuat Excel:", error);
+        alert("File Excel gagal dibuat. Silakan coba lagi dan pastikan koneksi internet aktif.");
+      }
+    }
+
+    // ---------------- PREVIEW & INIT ----------------
+    function renderPreview() {
+      const box = document.getElementById("logPreview");
+      const data = loadData();
+      const dates = Object.keys(data).sort();
+
+      if (!dates.length) {
+        box.textContent = "Belum ada data.";
+        return;
+      }
+
+      let output = "";
+      dates.forEach(tanggal => {
+        output += `Tanggal: ${tanggal}\n`;
+        (Array.isArray(data[tanggal]) ? data[tanggal] : []).forEach(rec => {
+          if (rec.status === STATUS.CATATAN) {
+            output += `  - ${rec.nama} | Catatan: ${rec.catatan || "(kosong)"}\n`;
+          } else {
+            const statusLabel = rec.status
+              .replace("Absent-Pagi", "Libur-Pagi")
+              .replace("Absent-Siang", "Libur-Siang");
+            output += `  - ${rec.nama} | ${statusLabel} | ${rec.jam || ""}\n`;
+          }
+        });
+        output += "\n";
+      });
+      box.textContent = output;
+    }
+
+    function initTanggal() {
+      const now = getNow();
+      document.getElementById("infoTanggal").textContent =
+        `Hari ini: ${now.dayName}, ${now.dateLabel}`;
+    }
+
+    initTanggal();
+    renderPegawai();
+    renderPreview();
+  </script>
+</body>
+</html>
